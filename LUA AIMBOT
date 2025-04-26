@@ -1,0 +1,123 @@
+-- Settings
+local aimbotEnabled = false
+local toggleKey = Enum.KeyCode.Nine
+local maxDistance = 800
+local projectileSpeed = 150 -- a tiny bit faster for full charge
+local aimbotFOV = 100
+local verticalCompensation = 0.05 -- tweak if needed, small Y boost
+
+-- Services
+local UIS = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- Drawing UI
+local SnapLine = Drawing.new("Line")
+SnapLine.Color = Color3.fromRGB(0, 255, 255)
+SnapLine.Thickness = 2
+SnapLine.Visible = false
+
+local HeadDot = Drawing.new("Circle")
+HeadDot.Color = Color3.fromRGB(0, 255, 255)
+HeadDot.Thickness = 2
+HeadDot.NumSides = 30
+HeadDot.Radius = 6
+HeadDot.Visible = false
+
+-- Prediction
+local function predictPosition(pos, vel)
+    local distance = (pos - Camera.CFrame.Position).Magnitude
+    local time = distance / projectileSpeed
+
+    -- Predict movement but scale it down (not full velocity)
+    local predictedMove = vel * time * 0.75 -- only 75% velocity to avoid overshoot
+    local finalPrediction = pos + predictedMove
+
+    -- Small vertical compensation
+    finalPrediction = finalPrediction + Vector3.new(0, verticalCompensation * distance, 0)
+
+    return finalPrediction
+end
+
+-- Find Closest Player
+local function getClosestPlayer()
+    local closestPlayer
+    local closestDist = math.huge
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") and player.Character:FindFirstChild("HumanoidRootPart") then
+            local head = player.Character.Head
+            local hrp = player.Character.HumanoidRootPart
+
+            local predictedPos = predictPosition(head.Position, hrp.Velocity)
+            local screenPos, onScreen = Camera:WorldToViewportPoint(predictedPos)
+
+            if onScreen then
+                local distFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                local distToPlayer = (head.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+
+                if distFromCenter <= aimbotFOV and distToPlayer <= maxDistance then
+                    if distFromCenter < closestDist then
+                        closestDist = distFromCenter
+                        closestPlayer = player
+                    end
+                end
+            end
+        end
+    end
+
+    return closestPlayer
+end
+
+-- Update visuals
+local function updateVisuals(targetPos)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
+    if onScreen then
+        local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        SnapLine.From = center
+        SnapLine.To = Vector2.new(screenPos.X, screenPos.Y)
+        SnapLine.Visible = true
+
+        HeadDot.Position = Vector2.new(screenPos.X, screenPos.Y)
+        HeadDot.Visible = true
+    else
+        SnapLine.Visible = false
+        HeadDot.Visible = false
+    end
+end
+
+-- Toggle Aimbot
+UIS.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == toggleKey then
+        aimbotEnabled = not aimbotEnabled
+        print("Aimbot toggled:", aimbotEnabled)
+    end
+end)
+
+-- Main Loop
+RunService.RenderStepped:Connect(function()
+    if aimbotEnabled then
+        local target = getClosestPlayer()
+        if target and target.Character then
+            local head = target.Character:FindFirstChild("Head")
+            local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+            if head and hrp then
+                local predictedPos = predictPosition(head.Position, hrp.Velocity)
+                updateVisuals(predictedPos)
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, predictedPos), 1)
+            else
+                SnapLine.Visible = false
+                HeadDot.Visible = false
+            end
+        else
+            SnapLine.Visible = false
+            HeadDot.Visible = false
+        end
+    else
+        SnapLine.Visible = false
+        HeadDot.Visible = false
+    end
+end)
